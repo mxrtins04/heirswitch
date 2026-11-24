@@ -109,3 +109,53 @@ fn test_invalid_heir_splits_rejected() {
     let res = client.try_init(&owner, &token_id, &86_400, &bad_heirs, &None);
     assert_eq!(res, Err(Ok(SwitchError::InvalidHeirSplits)));
 }
+
+#[test]
+fn test_update_heirs_preview_payout_and_owner_withdrawal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000);
+
+    let (client, token_id, token, token_admin) = setup(&env);
+    let owner = Address::generate(&env);
+    let heir_a = Address::generate(&env);
+    let heir_b = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    let initial_heirs = vec![
+        &env,
+        HeirShare {
+            heir: heir_a.clone(),
+            share_bps: 10_000,
+        },
+    ];
+    client.init(&owner, &token_id, &86_400, &initial_heirs, &None);
+    token_admin.mint(&owner, &1_000_0000000);
+    client.deposit(&1_000_0000000);
+
+    // Owner withdraws 200 USDC while alive
+    let remaining = client.owner_withdraw(&200_0000000);
+    assert_eq!(remaining, 800_0000000);
+    assert_eq!(token.balance(&owner), 200_0000000);
+
+    // Update splits to 75% / 25%
+    let updated = vec![
+        &env,
+        HeirShare {
+            heir: heir_a.clone(),
+            share_bps: 7_500,
+        },
+        HeirShare {
+            heir: heir_b.clone(),
+            share_bps: 2_500,
+        },
+    ];
+    client.update_heirs(&updated);
+    assert_eq!(client.preview_heir_payout(&heir_a), 600_0000000);
+    assert_eq!(client.preview_heir_payout(&heir_b), 200_0000000);
+    assert_eq!(
+        client.try_preview_heir_payout(&stranger),
+        Err(Ok(SwitchError::HeirNotFound))
+    );
+    assert!(!client.has_claimed(&heir_a));
+}
