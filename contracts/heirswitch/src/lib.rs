@@ -220,6 +220,77 @@ impl HeirSwitchContract {
         Ok(payout)
     }
 
+    /// Reconfigure heir basis-point splits while the owner is active and no heir has claimed yet.
+    pub fn update_heirs(env: Env, heirs: Vec<HeirShare>) -> Result<(), SwitchError> {
+        let mut state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        state.owner.require_auth();
+
+        if state.total_claimed > 0 {
+            return Err(SwitchError::AlreadyClaimed);
+        }
+        if heirs.is_empty() {
+            return Err(SwitchError::InvalidHeirSplits);
+        }
+        let mut sum_bps: u32 = 0;
+        for h in heirs.iter() {
+            if h.share_bps == 0 {
+                return Err(SwitchError::InvalidHeirSplits);
+            }
+            sum_bps = sum_bps.saturating_add(h.share_bps);
+        }
+        if sum_bps != TOTAL_BPS {
+            return Err(SwitchError::InvalidHeirSplits);
+        }
+
+        state.heirs = heirs;
+        state.last_heartbeat = env.ledger().timestamp();
+        env.storage().persistent().set(&DataKey::Vault, &state);
+        Self::bump_ttl(&env);
+        env.events().publish((symbol_short!("u_heirs"), state.owner), sum_bps);
+        Ok(())
+    }
+
+    /// Set or clear the optional guardian address.
+    pub fn set_guardian(env: Env, guardian: Option<Address>) -> Result<(), SwitchError> {
+        let mut state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        state.owner.require_auth();
+
+        state.guardian = guardian;
+        state.last_heartbeat = env.ledger().timestamp();
+        env.storage().persistent().set(&DataKey::Vault, &state);
+        Self::bump_ttl(&env);
+        env.events().publish((symbol_short!("guard"), state.owner), ());
+        Ok(())
+    }
+
+    /// Query whether a given heir has already claimed their share.
+    pub fn has_claimed(env: Env, heir: Address) -> bool {
+        env.storage().persistent().has(&DataKey::Claimed(heir))
+    }
+
+    /// Preview an heir's current payout in stroops without mutating state.
+    pub fn preview_heir_payout(env: Env, heir: Address) -> Result<i128, SwitchError> {
+        let state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        for h in state.heirs.iter() {
+            if h.heir == heir {
+                return Ok((state.locked_principal * (h.share_bps as i128)) / (TOTAL_BPS as i128));
+            }
+        }
+        Err(SwitchError::HeirNotFound)
+    }
+
     fn bump_ttl(env: &Env) {
         env.storage()
             .instance()
