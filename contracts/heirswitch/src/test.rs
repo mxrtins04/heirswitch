@@ -159,3 +159,33 @@ fn test_update_heirs_preview_payout_and_owner_withdrawal() {
     );
     assert!(!client.has_claimed(&heir_a));
 }
+
+#[test]
+fn test_update_inactivity_window_and_claimable_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 1_000_000);
+
+    let (client, token_id, _token, token_admin) = setup(&env);
+    let owner = Address::generate(&env);
+    let heir = Address::generate(&env);
+
+    let heirs = vec![&env, HeirShare { heir: heir.clone(), share_bps: 10_000 }];
+    client.init(&owner, &token_id, &86_400, &heirs, &None);
+    token_admin.mint(&owner, &500_0000000);
+    client.deposit(&500_0000000);
+
+    assert!(!client.is_claimable());
+    assert_eq!(client.unclaimed_balance(), 500_0000000);
+
+    // Extend inactivity window to 7 days
+    let seven_days = 7 * 86_400;
+    assert_eq!(client.update_inactivity_window(&seven_days), seven_days);
+    assert_eq!(client.time_remaining(), seven_days);
+
+    // Advance 7 days -> claimable
+    env.ledger().with_mut(|l| l.timestamp += seven_days);
+    assert!(client.is_claimable());
+    client.claim_heir_share(&heir);
+    assert_eq!(client.unclaimed_balance(), 0);
+}
