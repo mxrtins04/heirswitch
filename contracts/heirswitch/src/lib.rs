@@ -291,6 +291,49 @@ impl HeirSwitchContract {
         Err(SwitchError::HeirNotFound)
     }
 
+    /// Update the inactivity window (must remain >= 24h) and refresh heartbeat + TTL.
+    pub fn update_inactivity_window(env: Env, new_window_seconds: u64) -> Result<u64, SwitchError> {
+        if new_window_seconds < MIN_INACTIVITY_SECONDS {
+            return Err(SwitchError::InvalidInactivityWindow);
+        }
+        let mut state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        state.owner.require_auth();
+        if state.total_claimed > 0 {
+            return Err(SwitchError::AlreadyClaimed);
+        }
+        state.inactivity_seconds = new_window_seconds;
+        state.last_heartbeat = env.ledger().timestamp();
+        env.storage().persistent().set(&DataKey::Vault, &state);
+        Self::bump_ttl(&env);
+        env.events().publish((symbol_short!("u_win"),), new_window_seconds);
+        Ok(new_window_seconds)
+    }
+
+    /// Return whether the inactivity switch has triggered and heirs can currently claim.
+    pub fn is_claimable(env: Env) -> Result<bool, SwitchError> {
+        let state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        let unlock_at = state.last_heartbeat.saturating_add(state.inactivity_seconds);
+        Ok(env.ledger().timestamp() >= unlock_at)
+    }
+
+    /// Return remaining unclaimed principal in stroops.
+    pub fn unclaimed_balance(env: Env) -> Result<i128, SwitchError> {
+        let state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        Ok(state.locked_principal.saturating_sub(state.total_claimed))
+    }
+
     fn bump_ttl(env: &Env) {
         env.storage()
             .instance()
