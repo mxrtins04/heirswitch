@@ -334,6 +334,26 @@ impl HeirSwitchContract {
         Ok(state.locked_principal.saturating_sub(state.total_claimed))
     }
 
+    /// Return the configured list of heirs and basis-point shares.
+    pub fn list_heirs(env: Env) -> Result<Vec<HeirShare>, SwitchError> {
+        let state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        Ok(state.heirs)
+    }
+
+    /// Return the exact Unix timestamp when heirs become eligible to claim.
+    pub fn unlock_timestamp(env: Env) -> Result<u64, SwitchError> {
+        let state: VaultState = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(SwitchError::NotInitialized)?;
+        Ok(state.last_heartbeat.saturating_add(state.inactivity_seconds))
+    }
+
     fn bump_ttl(env: &Env) {
         env.storage()
             .instance()
