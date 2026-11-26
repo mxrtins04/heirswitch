@@ -189,3 +189,28 @@ fn test_update_inactivity_window_and_claimable_state() {
     client.claim_heir_share(&heir);
     assert_eq!(client.unclaimed_balance(), 0);
 }
+
+#[test]
+fn test_list_heirs_unlock_timestamp_and_guardian_clear() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 5_000_000);
+
+    let (client, token_id, _token, _admin) = setup(&env);
+    let owner = Address::generate(&env);
+    let heir = Address::generate(&env);
+    let guardian = Address::generate(&env);
+
+    let heirs = vec![&env, HeirShare { heir: heir.clone(), share_bps: 10_000 }];
+    client.init(&owner, &token_id, &86_400, &heirs, &Some(guardian));
+
+    assert_eq!(client.list_heirs().len(), 1);
+    assert_eq!(client.unlock_timestamp(), 5_086_400);
+
+    // Clear guardian -> guardian_extend must return NoGuardianConfigured
+    client.set_guardian(&None);
+    assert_eq!(
+        client.try_guardian_extend(),
+        Err(Ok(SwitchError::NoGuardianConfigured))
+    );
+}
